@@ -1127,8 +1127,15 @@ namespace FCCAnalyses
         }
       };
 
+      // long-lived strange hadrons whose decay products are secondary tracks
+      // (K_S0, Lambda, Sigma+-, Xi, Omega), as in the ATLAS truth-origin scheme
+      auto is_strange_llp = [](int pdg) {
+        return pdg == 310 || pdg == 3122 || pdg == 3112 || pdg == 3222 ||
+               pdg == 3312 || pdg == 3322 || pdg == 3334;
+      };
+
       push_parents(mc_index);
-      bool has_b(false), has_c(false), has_tau(false);
+      bool has_b(false), has_c(false), has_tau(false), has_sllp(false);
       while (!stack.empty()) {
         int idx = stack.back();
         stack.pop_back();
@@ -1137,6 +1144,7 @@ namespace FCCAnalyses
         int pdg = std::abs(Particle[idx].PDG);
         if (pdg == 15) has_tau = true;
         if (pdg >= 100) {
+          if (is_strange_llp(pdg)) has_sllp = true;
           int fla = hf_from_pdg(pdg);
           if (fla == 5) has_b = true;
           else if (fla == 4) has_c = true;
@@ -1148,6 +1156,7 @@ namespace FCCAnalyses
       if (has_b) return 3;          // FromB
       if (has_c) return 5;          // FromC
       if (has_tau) return 6;        // FromTau
+      if (has_sllp) return 7;       // OtherSecondary (strange LLP decay)
       return 2;                     // Primary
     }
 

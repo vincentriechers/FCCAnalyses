@@ -248,7 +248,8 @@ namespace FCCAnalyses {
                                                               const std::vector<std::vector<int>>& indices);
 
     /// as get_PIDs_cluster, but returns a truth origin label from the MC parent ancestry
-    /// (2 primary, 3 from b, 4 from b via c, 5 from c, 6 from tau, 7 other / no MC association)
+    /// (2 primary, 3 from b, 4 from b via c, 5 from c, 6 from tau,
+    ///  7 other secondary: strange LLP decay (K_S0/Lambda/hyperon) or no MC association)
     rv::RVec<FCCAnalysesJetConstituentsData> get_truthOrigin_cluster(const ROOT::VecOps::RVec< int > recin,
                                                                      const ROOT::VecOps::RVec< int > mcin,
                                                                      const rv::RVec<edm4hep::MCParticleData>& Particle,
