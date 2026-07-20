@@ -6,6 +6,13 @@
 #include "fastjet/JetDefinition.hh"
 #include "fastjet/PseudoJet.hh"
 #include "fastjet/Selector.hh"
+#include "fastjet/ClusterSequence.hh"
+// std
+#include <array>
+#include <cmath>
+#include <map>
+#include <set>
+#include <vector>
 // FCCAnalyses
 #include "FCCAnalyses/JetClusteringUtils.h"
 #include "FCCAnalyses/ReconstructedParticle.h"
@@ -1081,6 +1088,259 @@ namespace FCCAnalyses
           tmp.push_back(PIDs.at(const_index));
         }
         out.push_back(tmp);
+      }
+      return out;
+    }
+
+    /// heavy-flavour class of one PDG id (5 = b, 4 = c, 0 = other)
+    static int hf_from_pdg(int pdg)
+    {
+      int apid = std::abs(pdg);
+      if (apid == 5) return 5;
+      if (apid == 4) return 4;
+      if (apid < 100) return 0;
+      int d3 = (apid / 1000) % 10;
+      int d2 = (apid / 100) % 10;
+      int d1 = (apid / 10) % 10;
+      if (d3 == 5 || d2 == 5 || d1 == 5) return 5;
+      if (d3 == 4 || d2 == 4 || d1 == 4) return 4;
+      return 0;
+    }
+
+    /// truth origin label (2..7) of one MC particle, walking its parent ancestry
+    /// for b/c hadrons and taus; MCParents is the _Particle_parents index collection
+    static int truth_origin_label(int mc_index,
+                                  const rv::RVec<edm4hep::MCParticleData> &Particle,
+                                  const ROOT::VecOps::RVec<int> &MCParents)
+    {
+      if (mc_index < 0 || mc_index >= (int)Particle.size()) return 7; // OtherSecondary
+
+      std::set<int> visited;
+      std::vector<int> stack;
+      auto push_parents = [&](int idx) {
+        const auto &p = Particle[idx];
+        for (unsigned int r = p.parents_begin; r < p.parents_end; ++r) {
+          if (r < MCParents.size()) {
+            int par = MCParents[r];
+            if (par >= 0 && par < (int)Particle.size()) stack.push_back(par);
+          }
+        }
+      };
+
+      push_parents(mc_index);
+      bool has_b(false), has_c(false), has_tau(false);
+      while (!stack.empty()) {
+        int idx = stack.back();
+        stack.pop_back();
+        if (visited.count(idx)) continue;
+        visited.insert(idx);
+        int pdg = std::abs(Particle[idx].PDG);
+        if (pdg == 15) has_tau = true;
+        if (pdg >= 100) {
+          int fla = hf_from_pdg(pdg);
+          if (fla == 5) has_b = true;
+          else if (fla == 4) has_c = true;
+        }
+        push_parents(idx);
+      }
+
+      if (has_b && has_c) return 4; // FromBC
+      if (has_b) return 3;          // FromB
+      if (has_c) return 5;          // FromC
+      if (has_tau) return 6;        // FromTau
+      return 2;                     // Primary
+    }
+
+    /// reco index -> MC index from the RecoMCLink from/to index collections
+    static std::map<int, int> reco_to_mc_map(const ROOT::VecOps::RVec<int> &recin,
+                                             const ROOT::VecOps::RVec<int> &mcin)
+    {
+      std::map<int, int> m;
+      size_t n = std::min(recin.size(), mcin.size());
+      for (size_t i = 0; i < n; ++i) m[recin[i]] = mcin[i];
+      return m;
+    }
+
+    rv::RVec<FCCAnalysesJetConstituentsData> get_truthOrigin_cluster(const ROOT::VecOps::RVec<int> recin,
+                                                                     const ROOT::VecOps::RVec<int> mcin,
+                                                                     const rv::RVec<edm4hep::MCParticleData> &Particle,
+                                                                     const ROOT::VecOps::RVec<int> MCParents,
+                                                                     const std::vector<std::vector<int>> &indices)
+    {
+      rv::RVec<FCCAnalysesJetConstituentsData> out;
+      std::map<int, int> mc_of_reco = reco_to_mc_map(recin, mcin);
+      for (const auto &jet_index : indices)
+      {
+        FCCAnalysesJetConstituentsData tmp;
+        for (const auto &const_index : jet_index)
+        {
+          auto it = mc_of_reco.find(const_index);
+          // no MC association -> 7
+          tmp.push_back(it == mc_of_reco.end() ? 7.f
+                                               : (float)truth_origin_label(it->second, Particle, MCParents));
+        }
+        out.push_back(tmp);
+      }
+      return out;
+    }
+
+    rv::RVec<FCCAnalysesJetConstituentsData> get_truthVertex_cluster(const ROOT::VecOps::RVec<int> recin,
+                                                                     const ROOT::VecOps::RVec<int> mcin,
+                                                                     const rv::RVec<edm4hep::MCParticleData> &Particle,
+                                                                     const std::vector<std::vector<int>> &indices)
+    {
+      // merge radius for clustering MC production vertices; only which
+      // constituents share an index matters, not the absolute value
+      const float kVertexMergeRadiusMm = 0.1f;
+      const float radius_sq = kVertexMergeRadiusMm * kVertexMergeRadiusMm;
+
+      std::map<int, int> mc_of_reco = reco_to_mc_map(recin, mcin);
+
+      // cluster the unique matched MC production vertices event-wide, so
+      // vertex identity is preserved across jets
+      std::set<int> unique_mc;
+      for (const auto &jet_index : indices)
+        for (const auto &const_index : jet_index) {
+          auto it = mc_of_reco.find(const_index);
+          if (it != mc_of_reco.end() && it->second >= 0 && it->second < (int)Particle.size())
+            unique_mc.insert(it->second);
+        }
+
+      std::vector<std::array<float, 3>> cluster_xyz;
+      std::vector<int> cluster_size;
+      std::map<int, int> mc_to_cluster;
+      for (int m : unique_mc) {
+        const auto &vtx = Particle[m].vertex;
+        float x = vtx.x, y = vtx.y, z = vtx.z;
+        int assigned = -1;
+        for (size_t ci = 0; ci < cluster_xyz.size(); ++ci) {
+          float dx = x - cluster_xyz[ci][0];
+          float dy = y - cluster_xyz[ci][1];
+          float dz = z - cluster_xyz[ci][2];
+          if (dx * dx + dy * dy + dz * dz < radius_sq) { assigned = (int)ci; break; }
+        }
+        if (assigned < 0) {
+          assigned = (int)cluster_xyz.size();
+          cluster_xyz.push_back({x, y, z});
+          cluster_size.push_back(0);
+        }
+        cluster_size[assigned]++;
+        mc_to_cluster[m] = assigned;
+      }
+
+      // largest cluster (normally the primary vertex) becomes index 0
+      std::vector<int> relabel(cluster_xyz.size(), -1);
+      if (!cluster_xyz.empty()) {
+        int biggest = 0;
+        for (size_t ci = 1; ci < cluster_size.size(); ++ci)
+          if (cluster_size[ci] > cluster_size[biggest]) biggest = (int)ci;
+        relabel[biggest] = 0;
+        int next_idx = 1;
+        for (size_t ci = 0; ci < cluster_xyz.size(); ++ci)
+          if ((int)ci != biggest) relabel[ci] = next_idx++;
+      }
+
+      rv::RVec<FCCAnalysesJetConstituentsData> out;
+      for (const auto &jet_index : indices)
+      {
+        FCCAnalysesJetConstituentsData tmp;
+        for (const auto &const_index : jet_index)
+        {
+          auto it = mc_of_reco.find(const_index);
+          if (it == mc_of_reco.end() || mc_to_cluster.find(it->second) == mc_to_cluster.end())
+            tmp.push_back(-1.f); // no MC link
+          else
+            tmp.push_back((float)relabel[mc_to_cluster[it->second]]);
+        }
+        out.push_back(tmp);
+      }
+      return out;
+    }
+
+    rv::RVec<float> get_hadronInitialPdg(const rv::RVec<fastjet::PseudoJet> &jets,
+                                         const rv::RVec<edm4hep::MCParticleData> &Particle,
+                                         const ROOT::VecOps::RVec<int> MCParents)
+    {
+      // Keep only production-flavour heavy hadrons: no hadron of the same
+      // heavy-flavour class in the parent ancestry (this also keeps the
+      // pre-oscillation state), and no c hadron from a b decay. Each hadron
+      // with pT > 5 GeV is assigned to its nearest jet in dR; per jet the
+      // closest b hadron wins, else the closest c hadron.
+      const float kHadronPtMinGeV = 5.0f;
+      const float kMaxMatchDR = 1.5f;
+
+      rv::RVec<float> out(jets.size(), 0.f);
+      if (jets.empty() || Particle.empty()) return out;
+
+      std::vector<float> best_dr_b(jets.size(), 1e9f), best_dr_c(jets.size(), 1e9f);
+      std::vector<int> best_pdg_b(jets.size(), 0), best_pdg_c(jets.size(), 0);
+
+      for (size_t im = 0; im < Particle.size(); ++im) {
+        int pdg = Particle[im].PDG;
+        int fla = hf_from_pdg(pdg);
+        if (std::abs(pdg) < 100 || (fla != 4 && fla != 5)) continue;
+
+        const auto &mom = Particle[im].momentum;
+        float pt = std::sqrt(mom.x * mom.x + mom.y * mom.y);
+        if (pt < kHadronPtMinGeV) continue;
+
+        // ancestry flags: 3/4 = b hadron above, 4/5 = c hadron above
+        int anc = truth_origin_label((int)im, Particle, MCParents);
+        bool b_above = (anc == 3 || anc == 4);
+        bool c_above = (anc == 4 || anc == 5);
+        if (fla == 5 && b_above) continue;
+        if (fla == 4 && (b_above || c_above)) continue;
+
+        fastjet::PseudoJet h(mom.x, mom.y, mom.z,
+                             std::sqrt(mom.x * mom.x + mom.y * mom.y + mom.z * mom.z));
+        int nearest = -1;
+        float nearest_dr = 1e9f;
+        for (size_t ij = 0; ij < jets.size(); ++ij) {
+          float dr = jets[ij].delta_R(h);
+          if (dr < nearest_dr) { nearest_dr = dr; nearest = (int)ij; }
+        }
+        if (nearest < 0 || nearest_dr > kMaxMatchDR) continue;
+        if (fla == 5 && nearest_dr < best_dr_b[nearest]) { best_dr_b[nearest] = nearest_dr; best_pdg_b[nearest] = pdg; }
+        if (fla == 4 && nearest_dr < best_dr_c[nearest]) { best_dr_c[nearest] = nearest_dr; best_pdg_c[nearest] = pdg; }
+      }
+
+      for (size_t ij = 0; ij < jets.size(); ++ij)
+        out[ij] = (float)(best_pdg_b[ij] != 0 ? best_pdg_b[ij] : best_pdg_c[ij]);
+      return out;
+    }
+
+    rv::RVec<float> get_genJetPt(const rv::RVec<fastjet::PseudoJet> &jets,
+                                 const rv::RVec<edm4hep::MCParticleData> &Particle)
+    {
+      // Cluster gen jets from stable MC particles (generatorStatus == 1,
+      // neutrinos excluded) with the same settings as the reco jets
+      // (ee_kt, exclusive to jets.size(), E-scheme), then give each reco
+      // jet the pT of its dR-nearest gen jet.
+      rv::RVec<float> out(jets.size(), -1.f);
+      if (jets.empty()) return out;
+
+      std::vector<fastjet::PseudoJet> inputs;
+      inputs.reserve(Particle.size());
+      for (const auto &p : Particle) {
+        if (p.generatorStatus != 1) continue;
+        int apdg = std::abs(p.PDG);
+        if (apdg == 12 || apdg == 14 || apdg == 16) continue; // neutrinos
+        const auto &mom = p.momentum;
+        double e = std::sqrt(mom.x * mom.x + mom.y * mom.y + mom.z * mom.z + p.mass * p.mass);
+        inputs.emplace_back(mom.x, mom.y, mom.z, e);
+      }
+      if ((int)inputs.size() < (int)jets.size()) return out; // exclusive_jets needs >= njets
+
+      fastjet::JetDefinition def(fastjet::ee_kt_algorithm); // E-scheme is the ee_kt default
+      fastjet::ClusterSequence cs(inputs, def);
+      std::vector<fastjet::PseudoJet> genjets = cs.exclusive_jets((int)jets.size());
+
+      for (size_t ij = 0; ij < jets.size(); ++ij) {
+        float nearest_dr = 1e9f;
+        for (const auto &gj : genjets) {
+          float dr = jets[ij].delta_R(gj);
+          if (dr < nearest_dr) { nearest_dr = dr; out[ij] = (float)gj.pt(); }
+        }
       }
       return out;
     }

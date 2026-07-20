@@ -17,6 +17,11 @@ class RDFanalysis:
     def analysers(df):
         from examples.FCCee.weaver.config import collections, njets
 
+        ## index collections of the reco<->MC links and the MC parent relation
+        df = df.Alias("RecoMC0ind", "_RecoMCLink_from.index")
+        df = df.Alias("RecoMC1ind", "_RecoMCLink_to.index")
+        df = df.Alias("Particle0ind", "_Particle_parents.index")
+
         ## define jet clustering parameters
         jetClusteringHelper = ExclusiveJetClusteringHelper(collections["PFParticles"], njets)
 
@@ -32,6 +37,39 @@ class RDFanalysis:
 
         ## define observables for tagger
         df = jetFlavourHelper.define(df)
+
+        ## truth labels for training: matched MC PDG, origin and vertex index per
+        ## constituent; production-flavour hadron PDG and gen-jet pT per jet
+        df = df.Define(
+            "pfcand_truthPID",
+            "JetConstituentsUtils::get_PIDs_cluster(RecoMC0ind, RecoMC1ind, {}, {}, _jetc)".format(
+                collections["PFParticles"], collections["GenParticles"]
+            ),
+        )
+        df = df.Define(
+            "pfcand_truthOrigin",
+            "JetConstituentsUtils::get_truthOrigin_cluster(RecoMC0ind, RecoMC1ind, {}, Particle0ind, _jetc)".format(
+                collections["GenParticles"]
+            ),
+        )
+        df = df.Define(
+            "pfcand_truthVertex",
+            "JetConstituentsUtils::get_truthVertex_cluster(RecoMC0ind, RecoMC1ind, {}, _jetc)".format(
+                collections["GenParticles"]
+            ),
+        )
+        df = df.Define(
+            "jet_hadronPdgId",
+            "JetConstituentsUtils::get_hadronInitialPdg({}, {}, Particle0ind)".format(
+                jetClusteringHelper.jets, collections["GenParticles"]
+            ),
+        )
+        df = df.Define(
+            "jet_truthPt",
+            "JetConstituentsUtils::get_genJetPt({}, {})".format(
+                jetClusteringHelper.jets, collections["GenParticles"]
+            ),
+        )
 
         ## compute invariant mass of two leading jets
         df = df.Define("jet_p4", "JetConstituentsUtils::compute_tlv_jets({})".format(jetClusteringHelper.jets))

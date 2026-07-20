@@ -247,6 +247,30 @@ namespace FCCAnalyses {
                                                               const rv::RVec<edm4hep::MCParticleData>& Particle,
                                                               const std::vector<std::vector<int>>& indices);
 
+    /// as get_PIDs_cluster, but returns a truth origin label from the MC parent ancestry
+    /// (2 primary, 3 from b, 4 from b via c, 5 from c, 6 from tau, 7 other / no MC association)
+    rv::RVec<FCCAnalysesJetConstituentsData> get_truthOrigin_cluster(const ROOT::VecOps::RVec< int > recin,
+                                                                     const ROOT::VecOps::RVec< int > mcin,
+                                                                     const rv::RVec<edm4hep::MCParticleData>& Particle,
+                                                                     const ROOT::VecOps::RVec< int > MCParents,
+                                                                     const std::vector<std::vector<int>>& indices);
+
+    /// as get_PIDs_cluster, but returns a truth vertex index from clustering the matched MC
+    /// production vertices (0 = largest cluster, 1,2,... = others, -1 = no MC association)
+    rv::RVec<FCCAnalysesJetConstituentsData> get_truthVertex_cluster(const ROOT::VecOps::RVec< int > recin,
+                                                                     const ROOT::VecOps::RVec< int > mcin,
+                                                                     const rv::RVec<edm4hep::MCParticleData>& Particle,
+                                                                     const std::vector<std::vector<int>>& indices);
+
+    /// per-jet PDG of the angularly matched production-flavour heavy hadron (0 if none)
+    rv::RVec<float> get_hadronInitialPdg(const rv::RVec<fastjet::PseudoJet>& jets,
+                                         const rv::RVec<edm4hep::MCParticleData>& Particle,
+                                         const ROOT::VecOps::RVec< int > MCParents);
+
+    /// per-jet pT of the angularly matched gen jet, clustered from stable MC particles (-1 if none)
+    rv::RVec<float> get_genJetPt(const rv::RVec<fastjet::PseudoJet>& jets,
+                                 const rv::RVec<edm4hep::MCParticleData>& Particle);
+
     rv::RVec<FCCAnalysesJetConstituentsData> get_isMu(const rv::RVec<FCCAnalysesJetConstituents>& jcs);
     rv::RVec<FCCAnalysesJetConstituentsData> get_isEl(const rv::RVec<FCCAnalysesJetConstituents>& jcs);
     rv::RVec<FCCAnalysesJetConstituentsData> get_isChargedHad(const rv::RVec<FCCAnalysesJetConstituents>& jcs);

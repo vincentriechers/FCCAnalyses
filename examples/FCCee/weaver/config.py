@@ -343,6 +343,31 @@ variables_pfcand = {
         "xmax": 3.14,
         "scale": "lin",
     },
+    ### per-constituent truth labels (defined in stage1.py)
+    "pfcand_truthPID": {
+        "name": "pfcand_truthPID",
+        "title": "truth PID",
+        "bin": 20001,
+        "xmin": -10000.5,
+        "xmax": 10000.5,
+        "scale": "lin",
+    },
+    "pfcand_truthOrigin": {
+        "name": "pfcand_truthOrigin",
+        "title": "truth origin label",
+        "bin": 9,
+        "xmin": -0.5,
+        "xmax": 8.5,
+        "scale": "lin",
+    },
+    "pfcand_truthVertex": {
+        "name": "pfcand_truthVertex",
+        "title": "truth vertex index",
+        "bin": 22,
+        "xmin": -1.5,
+        "xmax": 20.5,
+        "scale": "lin",
+    },
 }
 
 variables_jet = {
@@ -434,6 +459,23 @@ variables_jet = {
         "xmin": 0,
         "xmax": 20,
         "scale": "log",
+    },
+    ### jet-level truth targets (defined in stage1.py)
+    "jet_hadronPdgId": {
+        "name": "jet_hadronPdgId",
+        "title": "initial hadron PDG",
+        "bin": 12001,
+        "xmin": -6000.5,
+        "xmax": 6000.5,
+        "scale": "lin",
+    },
+    "jet_truthPt": {
+        "name": "jet_truthPt",
+        "title": "matched gen-jet p_{T} [GeV]",
+        "bin": 100,
+        "xmin": 0,
+        "xmax": 150,
+        "scale": "lin",
     },
 }
 
